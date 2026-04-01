@@ -1,0 +1,14 @@
+{
+  "action_id": "test-002",
+  "action_type": "data_retrieval",
+  "agent_id": "agent-sales-bot",
+  "payload": {
+    "query": "customer_list",
+    "fields_requested_count": 3,
+    "contains_pii": false,
+    "on_behalf_of": "sales-team"
+  },
+  "context": {
+    "max_fields_per_request": 10
+  }
+}

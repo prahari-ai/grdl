@@ -1,0 +1,85 @@
+# DAO / Cooperative Governance Template
+# For DAOs, cooperatives, and multi-stakeholder organizations.
+
+id: dao-governance-v1
+name: DAO Governance Rules
+description: >
+  Governance rules for AI agents operating within DAOs or cooperative
+  organizations. Enforces multi-stakeholder approval, treasury limits,
+  and democratic decision-making.
+version: "1.0.0"
+framework: dao_charter
+
+default_enforcement: enforce
+graceful_degradation: deny_all
+
+rules:
+
+  - id: dao.treasury_limit
+    name: Treasury action threshold
+    description: >
+      Treasury transactions above the configured threshold require
+      multi-sig or governance vote approval.
+    laws: [PRIMACY, SAFETY]
+    scope: treasury_transaction
+    condition:
+      field: payload.amount
+      operator: gt
+      value: 0
+      value_source: context.treasury_auto_limit
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: escalate
+      message: Treasury action exceeds autonomous limit. Requires governance vote.
+      escalation: governance_dao
+      audit_log: true
+
+  - id: dao.quorum_check
+    name: Governance quorum requirement
+    description: >
+      Governance proposals cannot be executed without meeting
+      the minimum quorum threshold.
+    laws: [FAIRNESS, ACCOUNTABILITY]
+    scope: governance_decision
+    condition:
+      field: payload.participation_rate
+      operator: lt
+      value: 0
+      value_source: context.quorum_threshold
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: Quorum not met. Wait for sufficient participation before executing.
+      audit_log: true
+
+  - id: dao.member_equity
+    name: One-member-one-vote enforcement
+    description: >
+      No single member or delegate can control more than the
+      configured maximum voting weight.
+    laws: [FAIRNESS, PRIMACY]
+    scope: governance_decision
+    condition:
+      field: payload.max_voter_weight
+      operator: gt
+      value: 0
+      value_source: context.max_voting_weight
+    severity: high
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: Voting weight exceeds maximum. Possible governance capture detected.
+      audit_log: true
+
+  - id: static.non_root
+    name: Non-root execution
+    laws: [SAFETY]
+    scope: "*"
+    severity: critical
+    target: openshell_static
+    timeout_ms: 0

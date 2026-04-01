@@ -1,0 +1,12 @@
+{
+  "action_id": "test-001",
+  "action_type": "access_control",
+  "agent_id": "agent-sales-bot",
+  "payload": {
+    "action": "grant_permission",
+    "target_is_self": true,
+    "permission": "admin",
+    "impact_level": "critical"
+  },
+  "context": {}
+}

@@ -1,0 +1,49 @@
+# Prahari Constitutional Governance - OpenShell Baseline Policy
+# This policy is applied when launching the prahari-constitutional sandbox.
+# GRDL-compiled rules are merged on top of this baseline at startup.
+#
+# Principle: Deny by default, allow only what is constitutionally necessary.
+# Reference: CFAIS Patent 202641001109, GRDL Patent 202641000868
+
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /proc
+    - /dev/urandom
+    - /etc
+    - /opt/prahari              # Engine code: read-only to agent
+    - /sandbox/cfais-rules      # Governance rules: agent cannot modify
+  read_write:
+    - /sandbox
+    - /tmp
+    - /dev/null
+    - /sandbox/cfais-audit      # Audit logs: append-only enforced by sidecar
+
+landlock:
+  compatibility: best_effort
+
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+# Network policies: CFAIS sidecar + restricted external access
+network_policies:
+  cfais_sidecar:
+    name: cfais-constitutional-engine
+    endpoints:
+      - host: 127.0.0.1
+        port: 9700
+        protocol: rest
+        tls: passthrough
+        enforcement: enforce
+        access: full
+    binaries:
+      - path: /sandbox/**
+
+  # Default: block all external network access.
+  # Agent must request specific endpoints through operator approval,
+  # which OpenShell surfaces in the TUI for human review.

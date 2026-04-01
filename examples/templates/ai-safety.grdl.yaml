@@ -1,0 +1,90 @@
+# AI Safety Governance Template
+# For organizations deploying LLMs and AI agents with safety requirements.
+
+id: ai-safety-v1
+name: AI Safety Governance
+description: >
+  Safety rules for AI agents and LLM-powered systems. Addresses
+  prompt injection, output validation, hallucination boundaries,
+  and responsible AI practices.
+version: "1.0.0"
+framework: ai_safety
+
+default_enforcement: enforce
+graceful_degradation: deny_all
+
+rules:
+
+  - id: safety.output_validation
+    name: Output content policy
+    description: >
+      Agent outputs that would be delivered to end users must pass
+      content safety checks. Blocks harmful, misleading, or
+      policy-violating content.
+    laws: [SAFETY, ACCOUNTABILITY]
+    scope: content_generation
+    condition:
+      logic: any_of
+      conditions:
+        - field: payload.safety_score
+          operator: lt
+          value: 0
+          value_source: context.safety_threshold
+        - field: payload.contains_pii_in_output
+          operator: eq
+          value: true
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: Output failed content safety checks. Review and regenerate.
+      audit_log: true
+
+  - id: safety.tool_call_allowlist
+    name: Tool call allowlist enforcement
+    description: >
+      Agents may only invoke tools from the approved allowlist.
+      Prevents unauthorized tool use and scope creep.
+    laws: [SAFETY, PRIMACY]
+    scope: tool_invocation
+    condition:
+      field: payload.tool_name
+      operator: not_in
+      value: []
+      value_source: context.allowed_tools
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: Tool not in approved allowlist. Request operator approval.
+      escalation: operator
+      audit_log: true
+
+  - id: safety.rate_limit
+    name: Action rate limiting
+    description: >
+      Prevents runaway agent loops by limiting actions per time window.
+    laws: [SAFETY]
+    scope: "*"
+    condition:
+      field: payload.actions_in_window
+      operator: gt
+      value: 0
+      value_source: context.max_actions_per_window
+    severity: high
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: throttle
+      message: Rate limit exceeded. Agent paused until next window.
+      audit_log: true
+
+  - id: static.non_root
+    name: Non-root execution
+    laws: [SAFETY]
+    scope: "*"
+    severity: critical
+    target: openshell_static
+    timeout_ms: 0

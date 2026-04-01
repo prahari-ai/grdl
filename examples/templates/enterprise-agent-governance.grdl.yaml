@@ -1,0 +1,284 @@
+# Enterprise AI Agent Governance Template
+# Clone and customize for your organization's agent fleet.
+
+id: enterprise-agent-governance-v1
+name: Enterprise Agent Governance
+description: >
+  Baseline governance rules for autonomous AI agents operating
+  in enterprise environments. Addresses the top 10 agent governance
+  concerns identified by McKinsey, Gartner, and CSA in 2026.
+version: "1.0.0"
+framework: enterprise_policy
+
+default_enforcement: enforce
+default_severity: high
+graceful_degradation: allow_with_audit
+
+rules:
+
+  # ── LAW 1: PRIMACY — Human authority boundaries ────────────────────
+
+  - id: primacy.human_approval_required
+    name: Human-in-the-loop for high-impact actions
+    description: >
+      Actions exceeding a configurable impact threshold require
+      explicit human approval before execution. Prevents autonomous
+      decisions on financial, security, or personnel matters.
+    laws: [PRIMACY]
+    scope: "*"
+    condition:
+      logic: any_of
+      conditions:
+        - field: payload.impact_level
+          operator: in
+          value: ["critical", "high"]
+        - field: payload.financial_amount
+          operator: gt
+          value: 0
+          value_source: context.auto_approval_limit
+        - field: payload.affects_access_control
+          operator: eq
+          value: true
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: escalate
+      message: >
+        This action requires human approval. Impact level or financial
+        amount exceeds the autonomous decision threshold.
+      escalation: operator
+      audit_log: true
+    timeout_ms: 20
+
+  # ── LAW 2: TRANSPARENCY — Decision explainability ──────────────────
+
+  - id: transparency.require_reasoning
+    name: Mandatory decision reasoning
+    description: >
+      Every governance-impacting action must include an explanation
+      of the reasoning. Opaque decisions are blocked.
+    laws: [TRANSPARENCY]
+    scope: governance_decision
+    condition:
+      logic: all_of
+      conditions:
+        - field: payload.reasoning
+          operator: exists
+          value: false
+    severity: high
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: >
+        Governance decisions require explicit reasoning in the payload.
+        Include a 'reasoning' field explaining the decision rationale.
+      audit_log: true
+    timeout_ms: 10
+
+  # ── LAW 3: ACCOUNTABILITY — Agent identity and traceability ────────
+
+  - id: accountability.agent_identity
+    name: Agent identity verification
+    description: >
+      Every action must carry a verifiable agent identity. Anonymous
+      or unidentified agent actions are rejected.
+    laws: [ACCOUNTABILITY]
+    scope: "*"
+    condition:
+      logic: any_of
+      conditions:
+        - field: agent_id
+          operator: eq
+          value: ""
+        - field: payload.on_behalf_of
+          operator: exists
+          value: false
+    severity: high
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: >
+        Actions must carry a valid agent_id and specify on_behalf_of
+        (the human or process that authorized this agent).
+      audit_log: true
+    timeout_ms: 10
+
+  # ── LAW 5: SAFETY — Cascading failure and privilege limits ─────────
+
+  - id: safety.budget_cap
+    name: Resource budget enforcement
+    description: >
+      Prevents agent budget/resource runaway. Actions that would
+      exceed the allocated budget are blocked.
+    laws: [SAFETY]
+    scope: resource_consumption
+    condition:
+      field: payload.estimated_cost
+      operator: gt
+      value: 0
+      value_source: context.remaining_budget
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: >
+        Estimated cost exceeds remaining budget. Request a budget
+        increase from the operator before proceeding.
+      escalation: operator
+      audit_log: true
+    timeout_ms: 15
+
+  - id: safety.privilege_escalation_block
+    name: Privilege escalation prevention
+    description: >
+      Agents cannot grant themselves or other agents elevated
+      permissions. All privilege changes require human approval.
+    laws: [SAFETY, PRIMACY]
+    scope: access_control
+    condition:
+      logic: any_of
+      conditions:
+        - field: payload.action
+          operator: in
+          value: ["grant_permission", "elevate_role", "create_admin", "modify_policy"]
+        - field: payload.target_is_self
+          operator: eq
+          value: true
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: >
+        Privilege modifications by agents are prohibited. All access
+        control changes require human operator approval.
+      escalation: operator
+      audit_log: true
+    timeout_ms: 10
+
+  - id: safety.cascading_action_limit
+    name: Cascading action depth limit
+    description: >
+      Limits the depth of agent-to-agent delegation chains to prevent
+      cascading failures. A single action cannot trigger more than
+      N downstream agent invocations.
+    laws: [SAFETY]
+    scope: "*"
+    condition:
+      field: payload.delegation_depth
+      operator: gt
+      value: 0
+      value_source: context.max_delegation_depth
+    severity: high
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: >
+        Delegation depth exceeds maximum allowed chain length.
+        This prevents cascading failures across agent networks.
+      audit_log: true
+    timeout_ms: 10
+
+  # ── LAW 6: PRIVACY — Data minimisation ─────────────────────────────
+
+  - id: privacy.data_scope_limit
+    name: Data access minimisation
+    description: >
+      Agents must request only the data fields necessary for their
+      task. Broad data access requests are flagged.
+    laws: [PRIVACY]
+    scope: data_access
+    condition:
+      field: payload.fields_requested_count
+      operator: gt
+      value: 0
+      value_source: context.max_fields_per_request
+    severity: medium
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: >
+        Data request exceeds the field count limit. Reduce the scope
+        of requested data to only what is necessary for this task.
+      audit_log: true
+    timeout_ms: 15
+
+  - id: privacy.pii_access_control
+    name: PII access requires justification
+    description: >
+      Any access to personally identifiable information must include
+      a purpose justification and will be logged.
+    laws: [PRIVACY, ACCOUNTABILITY]
+    scope: data_access
+    condition:
+      logic: all_of
+      conditions:
+        - field: payload.contains_pii
+          operator: eq
+          value: true
+        - field: payload.purpose_justification
+          operator: exists
+          value: false
+    severity: high
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: >
+        PII access requires a purpose_justification field explaining
+        why this personal data is needed for the current task.
+      audit_log: true
+    timeout_ms: 10
+
+  # ── LAW 4: FAIRNESS — Bias prevention ──────────────────────────────
+
+  - id: fairness.protected_attribute_block
+    name: Protected attribute exclusion
+    description: >
+      Agents must not use protected attributes (configurable per
+      jurisdiction) as decision features. Detects and blocks.
+    laws: [FAIRNESS]
+    scope: "*"
+    condition:
+      logic: any_of
+      conditions:
+        - field: payload.features_used
+          operator: contains
+          value: "protected_attribute"
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: >
+        Protected attributes detected in decision features. Remove
+        them and use only permissible criteria.
+      alternative: Use identity-blind matching on economic or merit criteria only.
+      audit_log: true
+    timeout_ms: 10
+
+  # ── OPENSHELL STATIC ────────────────────────────────────────────────
+
+  - id: static.audit_log_protection
+    name: Immutable audit log
+    laws: [ACCOUNTABILITY, TRANSPARENCY]
+    scope: data_access
+    severity: critical
+    enforcement: enforce
+    target: openshell_static
+    timeout_ms: 0
+
+  - id: static.non_root
+    name: Non-root agent execution
+    laws: [SAFETY]
+    scope: "*"
+    severity: critical
+    enforcement: enforce
+    target: openshell_static
+    timeout_ms: 0
