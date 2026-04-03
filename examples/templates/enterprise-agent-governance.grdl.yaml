@@ -271,7 +271,7 @@ rules:
     scope: data_access
     severity: critical
     enforcement: enforce
-    target: openshell_static
+    target: infrastructure
     timeout_ms: 0
 
   - id: static.non_root
@@ -280,5 +280,5 @@ rules:
     scope: "*"
     severity: critical
     enforcement: enforce
-    target: openshell_static
+    target: infrastructure
     timeout_ms: 0

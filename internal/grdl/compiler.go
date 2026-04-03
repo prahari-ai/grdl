@@ -1,19 +1,27 @@
 package grdl
 
 import (
+	"fmt"
 	"gopkg.in/yaml.v3"
 )
 
 const (
-	CFAISHost     = "127.0.0.1"
-	CFAISPort     = 9700
-	AuditPath     = "/sandbox/cfais-audit"
-	RulesPath     = "/sandbox/cfais-rules"
+	CFAISHost = "127.0.0.1"
+	CFAISPort = 9700
+	AuditPath = "/sandbox/cfais-audit"
+	RulesPath = "/sandbox/cfais-rules"
 )
 
-// CompilationResult holds both OpenShell policy and CFAIS runtime config.
+// Backend formats GRDL output for a specific runtime.
+type Backend interface {
+	Name() string
+	CompileInfrastructure(infra []Rule, network []Rule, rs *Ruleset) (map[string]interface{}, []string)
+	SidecarConfig() map[string]interface{}
+}
+
 type CompilationResult struct {
-	OpenShellPolicy map[string]interface{} `json:"openshell_policy"`
+	BackendName     string                 `json:"backend"`
+	InfraConfig     map[string]interface{} `json:"infrastructure_config"`
 	CFAISConfig     map[string]interface{} `json:"cfais_config"`
 	Stats           CompileStats           `json:"stats"`
 	Warnings        []string               `json:"warnings"`
@@ -21,42 +29,39 @@ type CompilationResult struct {
 
 type CompileStats struct {
 	TotalRules   int      `json:"total_rules"`
-	StaticRules  int      `json:"static_rules"`
-	DynamicRules int      `json:"dynamic_rules"`
+	InfraRules   int      `json:"infrastructure_rules"`
+	NetworkRules int      `json:"network_rules"`
 	RuntimeRules int      `json:"runtime_rules"`
 	LawsCovered  []string `json:"laws_covered"`
 }
 
-// ToOpenShellYAML serializes the OpenShell policy to YAML bytes.
-func (cr *CompilationResult) ToOpenShellYAML() ([]byte, error) {
-	return yaml.Marshal(cr.OpenShellPolicy)
+func (cr *CompilationResult) ToInfraYAML() ([]byte, error) {
+	return yaml.Marshal(cr.InfraConfig)
 }
 
-// ToCFAISYAML serializes the CFAIS runtime config to YAML bytes.
 func (cr *CompilationResult) ToCFAISYAML() ([]byte, error) {
 	return yaml.Marshal(cr.CFAISConfig)
 }
 
-// Compile transforms a Ruleset into OpenShell policies and CFAIS runtime config.
-func Compile(rs *Ruleset) *CompilationResult {
-	var static, dynamic, runtime []Rule
+// Compile transforms a Ruleset using the specified backend.
+func Compile(rs *Ruleset, backend Backend) *CompilationResult {
+	var infra, network, runtime []Rule
 	var warnings []string
 
 	for _, r := range rs.Rules {
-		switch r.Target {
-		case TargetOpenShellStatic:
-			static = append(static, r)
-		case TargetOpenShellDynamic:
-			dynamic = append(dynamic, r)
+		switch NormalizeTarget(r.Target) {
+		case TargetInfrastructure:
+			infra = append(infra, r)
+		case TargetNetwork:
+			network = append(network, r)
 		case TargetRuntime:
 			runtime = append(runtime, r)
 		case TargetHybrid:
-			dynamic = append(dynamic, r)
+			network = append(network, r)
 			runtime = append(runtime, r)
 		}
 	}
 
-	// Collect unique laws
 	lawSet := make(map[string]bool)
 	for _, r := range rs.Rules {
 		for _, l := range r.Laws {
@@ -68,16 +73,19 @@ func Compile(rs *Ruleset) *CompilationResult {
 		laws = append(laws, l)
 	}
 
-	osPolicy := buildOpenShellPolicy(dynamic, &warnings)
-	cfaisConfig := buildCFAISConfig(runtime, rs, laws)
+	infraConfig, infraWarnings := backend.CompileInfrastructure(infra, network, rs)
+	warnings = append(warnings, infraWarnings...)
+
+	cfaisConfig := buildCFAISConfig(runtime, rs, laws, backend)
 
 	return &CompilationResult{
-		OpenShellPolicy: osPolicy,
-		CFAISConfig:     cfaisConfig,
+		BackendName: backend.Name(),
+		InfraConfig: infraConfig,
+		CFAISConfig: cfaisConfig,
 		Stats: CompileStats{
 			TotalRules:   len(rs.Rules),
-			StaticRules:  len(static),
-			DynamicRules: len(dynamic),
+			InfraRules:   len(infra),
+			NetworkRules: len(network),
 			RuntimeRules: len(runtime),
 			LawsCovered:  laws,
 		},
@@ -85,45 +93,7 @@ func Compile(rs *Ruleset) *CompilationResult {
 	}
 }
 
-func buildOpenShellPolicy(dynamic []Rule, warnings *[]string) map[string]interface{} {
-	networkPolicies := map[string]interface{}{
-		"cfais_sidecar": map[string]interface{}{
-			"name": "cfais-governance-engine",
-			"endpoints": []map[string]interface{}{
-				{
-					"host":        CFAISHost,
-					"port":        CFAISPort,
-					"protocol":    "rest",
-					"tls":         "passthrough",
-					"enforcement": "enforce",
-					"access":      "full",
-				},
-			},
-			"binaries": []map[string]interface{}{
-				{"path": "/sandbox/**"},
-			},
-		},
-	}
-
-	return map[string]interface{}{
-		"version": 1,
-		"filesystem_policy": map[string]interface{}{
-			"include_workdir": true,
-			"read_only":  []string{"/usr", "/lib", "/proc", "/dev/urandom", "/etc", RulesPath},
-			"read_write": []string{"/sandbox", "/tmp", "/dev/null", AuditPath},
-		},
-		"process": map[string]interface{}{
-			"run_as_user":  "sandbox",
-			"run_as_group": "sandbox",
-		},
-		"landlock": map[string]interface{}{
-			"compatibility": "best_effort",
-		},
-		"network_policies": networkPolicies,
-	}
-}
-
-func buildCFAISConfig(runtime []Rule, rs *Ruleset, activeLaws []string) map[string]interface{} {
+func buildCFAISConfig(runtime []Rule, rs *Ruleset, activeLaws []string, backend Backend) map[string]interface{} {
 	lawsActive := make(map[string]bool)
 	for _, l := range activeLaws {
 		lawsActive[l] = true
@@ -135,9 +105,7 @@ func buildCFAISConfig(runtime []Rule, rs *Ruleset, activeLaws []string) map[stri
 		LawFairness, LawSafety, LawPrivacy, LawGracefulDegrad,
 	}
 	for _, l := range allLaws {
-		govLaws[string(l)] = map[string]interface{}{
-			"active": lawsActive[string(l)],
-		}
+		govLaws[string(l)] = map[string]interface{}{"active": lawsActive[string(l)]}
 	}
 
 	rules := make([]interface{}, 0, len(runtime))
@@ -147,17 +115,16 @@ func buildCFAISConfig(runtime []Rule, rs *Ruleset, activeLaws []string) map[stri
 
 	return map[string]interface{}{
 		"cfais_engine": map[string]interface{}{
-			"version":         "0.1.0",
+			"version":         "0.2.0",
 			"ruleset_id":      rs.ID,
 			"ruleset_version": rs.Version,
 			"framework":       rs.Framework,
-			"sidecar":         map[string]interface{}{"host": CFAISHost, "port": CFAISPort},
+			"sidecar":         backend.SidecarConfig(),
 			"graceful_degradation": map[string]interface{}{
 				"policy":     rs.GracefulDegradation,
 				"timeout_ms": 100,
 				"circuit_breaker": map[string]interface{}{
-					"failure_threshold": 5,
-					"recovery_s":        30,
+					"failure_threshold": 5, "recovery_s": 30,
 				},
 			},
 			"audit": map[string]interface{}{"log_path": AuditPath, "enabled": true},
@@ -172,37 +139,27 @@ func serializeRule(r Rule) map[string]interface{} {
 	for i, l := range r.Laws {
 		laws[i] = string(l)
 	}
-
 	entry := map[string]interface{}{
-		"id":          r.ID,
-		"name":        r.Name,
-		"description": r.Description,
-		"scope":       r.Scope,
-		"severity":    string(r.Severity),
-		"enforcement": string(r.Enforcement),
-		"laws":        laws,
-		"timeout_ms":  r.TimeoutMs,
+		"id": r.ID, "name": r.Name, "description": r.Description,
+		"scope": r.Scope, "severity": string(r.Severity),
+		"enforcement": string(r.Enforcement), "laws": laws, "timeout_ms": r.TimeoutMs,
 	}
-
 	if r.Condition != nil {
 		entry["condition"] = serializeCondition(*r.Condition)
 	}
 	if r.Remedy != nil {
 		entry["remedy"] = map[string]interface{}{
-			"action":      r.Remedy.Action,
-			"message":     r.Remedy.Message,
-			"alternative": r.Remedy.Alternative,
-			"escalation":  r.Remedy.Escalation,
-			"audit_log":   r.Remedy.AuditLog,
+			"action": r.Remedy.Action, "message": r.Remedy.Message,
+			"alternative": r.Remedy.Alternative, "escalation": r.Remedy.Escalation,
+			"audit_log": r.Remedy.AuditLog,
 		}
 	}
 	if len(r.PolicyRefs) > 0 {
 		refs := make([]map[string]interface{}, len(r.PolicyRefs))
 		for i, p := range r.PolicyRefs {
 			refs[i] = map[string]interface{}{
-				"framework":    p.Framework,
-				"provision_id": p.ProvisionID,
-				"description":  p.Description,
+				"framework": p.Framework, "provision_id": p.ProvisionID,
+				"description": p.Description,
 			}
 		}
 		entry["policy_refs"] = refs
@@ -222,18 +179,25 @@ func serializeCondition(c Condition) map[string]interface{} {
 		for i, sub := range c.Conditions {
 			subs[i] = serializeCondition(sub)
 		}
-		return map[string]interface{}{
-			"logic":      c.Logic,
-			"conditions": subs,
-		}
+		return map[string]interface{}{"logic": c.Logic, "conditions": subs}
 	}
-	m := map[string]interface{}{
-		"field":    c.Field,
-		"operator": c.Operator,
-		"value":    c.Value,
-	}
+	m := map[string]interface{}{"field": c.Field, "operator": c.Operator, "value": c.Value}
 	if c.ValueSource != "" {
 		m["value_source"] = c.ValueSource
 	}
 	return m
+}
+
+// GetBackend returns a backend by name.
+func GetBackend(name string) (Backend, error) {
+	switch name {
+	case "openshell":
+		return &openshellBackend{}, nil
+	case "docker":
+		return &dockerBackend{}, nil
+	case "standalone":
+		return &standaloneBackend{}, nil
+	default:
+		return nil, fmt.Errorf("unknown backend: %s (available: openshell, docker, standalone)", name)
+	}
 }

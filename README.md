@@ -1,95 +1,81 @@
-# Prahari — Governance Policy Engine for AI Agents
+# GRDL — Governance Rule Definition Language
 
-**Deterministic governance for autonomous AI agents running in [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).**
+**The YAML standard for AI agent governance. Runtime-agnostic. Deterministic. Sub-microsecond.**
 
-Single static binary. No runtime dependencies. ~5MB memory footprint.
-
-OpenShell controls what agents *can* do (infrastructure).
-Prahari controls what agents *should* do (governance).
+GRDL compiles structured governance rules into any enforcement backend — NVIDIA OpenShell, Docker, Kubernetes, or standalone HTTP. One ruleset, any runtime.
 
 ---
 
-## Build
+## The problem
+
+Autonomous AI agents (Gemma 4, OpenClaw, Claude Code, custom LLM agents) make decisions and take actions without human input. The industry has infrastructure security (OpenShell, Docker sandboxes). Nobody has decision governance — should this agent spend beyond its budget? Can it escalate its own permissions? Is the delegation chain too deep?
+
+GRDL is the missing layer.
+
+## How it works
+
+```
+Agent decides to act → CFAIS sidecar evaluates → ALLOW or DENY → Agent proceeds or adjusts
+```
+
+Write governance rules in YAML. The compiler produces enforcement config for your runtime:
 
 ```bash
-# Requires Go 1.22+
-go build -o prahari ./cmd/prahari
-
-# Or use make
-make build
+prahari compile rules.grdl.yaml --backend openshell    # NVIDIA OpenShell YAML
+prahari compile rules.grdl.yaml --backend docker       # Docker Compose + seccomp
+prahari compile rules.grdl.yaml --backend standalone   # HTTP sidecar only (works anywhere)
 ```
+
+The CFAIS engine is deterministic — mathematical comparisons, not ML. Sub-microsecond evaluation. Single static binary.
 
 ## Quick start
 
 ```bash
-# Validate a ruleset
-./prahari validate examples/templates/enterprise-agent-governance.grdl.yaml
+go install github.com/prahari-ai/grdl/cmd/prahari@latest
 
-# Compile GRDL → OpenShell YAML + CFAIS config
-./prahari compile examples/templates/enterprise-agent-governance.grdl.yaml
+# Pick a template, compile, test
+prahari validate examples/templates/enterprise-agent-governance.grdl.yaml
+prahari compile examples/templates/enterprise-agent-governance.grdl.yaml --backend standalone
+prahari evaluate examples/templates/enterprise-agent-governance.grdl.yaml test-action.json
 
-# Test an action against the rules
-./prahari evaluate examples/templates/enterprise-agent-governance.grdl.yaml examples/test-action-denied.json
-
-# Start the sidecar server
-./prahari serve examples/templates/enterprise-agent-governance.grdl.yaml --addr :9700
+# Run the governance sidecar
+prahari serve examples/templates/enterprise-agent-governance.grdl.yaml --addr :9700
 ```
 
-## OpenShell integration
+Any agent framework (Gemma 4 + Ollama, OpenClaw, LangChain, CrewAI) calls `POST http://localhost:9700/evaluate` before executing each tool call. Denied actions return 403 with an explanation.
 
-```bash
-# Build Docker image (multi-stage, ~15MB final)
-make docker
+## Backends
 
-# Or directly in OpenShell
-openshell sandbox create --from prahari-constitutional
-```
+| Backend | Infrastructure enforcement | Use case |
+|---------|---------------------------|----------|
+| `openshell` | OpenShell YAML (filesystem, network, process, Landlock) | NVIDIA NemoClaw sandboxes |
+| `docker` | Docker Compose + seccomp profiles | Standard container deployments |
+| `standalone` | None (advisory HTTP sidecar) | Any agent, any runtime, any language |
+
+Same GRDL rules, same CFAIS engine, different infrastructure layer.
 
 ## Governance templates
 
-| Template | Use case |
-|----------|----------|
-| enterprise-agent-governance | Budget caps, privilege escalation, PII controls, cascading depth |
-| dao-governance | Treasury limits, quorum, voting weight caps |
-| ai-safety | Tool allowlists, output validation, rate limiting |
-
-Clone a template, edit thresholds, compile, deploy.
-
-## Test
-
-```bash
-make test     # unit + integration tests
-make bench    # benchmark (ns/op per evaluation)
-make smoke    # full CLI smoke test
-```
-
-## Architecture
-
-```
-Agent → OpenShell Gateway → CFAIS Sidecar (:9700) → Verdict → Target
-                                   │
-                            GRDL Rules Engine
-                          (deterministic, <1μs)
-```
-
-The engine is deterministic. Mathematical comparisons and set operations only.
-No ML. No probabilistic decisions. Formally verifiable.
+| Template | Rules | Key governance controls |
+|----------|-------|----------------------|
+| `enterprise-agent-governance` | 11 | Budget caps, privilege escalation, PII controls, cascading depth, human-in-the-loop |
+| `dao-governance` | 4 | Treasury limits, quorum, voting weight caps |
+| `ai-safety` | 4 | Tool allowlists, output validation, rate limiting |
 
 ## The Seven Governance Laws
 
 | # | Law | Addresses |
 |---|-----|-----------|
-| 1 | Primacy | Decision authority boundaries, human override |
-| 2 | Transparency | Explainability, audit trails, traceability |
-| 3 | Accountability | Agent identity, ownership, lifecycle |
-| 4 | Fairness | Bias prevention, equitable access |
+| 1 | Primacy | Human authority overrides agent decisions |
+| 2 | Transparency | All decisions explainable and auditable |
+| 3 | Accountability | Every action traced to an entity |
+| 4 | Fairness | No bias in agent decisions |
 | 5 | Safety | Cascading failures, privilege limits, budget runaway |
-| 6 | Privacy | Data minimisation, PII controls, data sovereignty |
-| 7 | Graceful degradation | Deterministic fallback, circuit breaking |
+| 6 | Privacy | Data minimisation, PII controls |
+| 7 | Graceful degradation | Deterministic fallback on failure |
 
 ## License
 
-Core (`cmd/`, `internal/`): Apache 2.0
-Enterprise (`enterprise/`): BSL 1.1
+Core: Apache 2.0 | Enterprise modules: BSL 1.1
 
 Built by [Prahari.ai](https://prahari.ai)

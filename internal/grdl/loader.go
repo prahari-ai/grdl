@@ -7,7 +7,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// LoadRuleset reads and parses a GRDL YAML file into a Ruleset.
 func LoadRuleset(path string) (*Ruleset, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -16,14 +15,11 @@ func LoadRuleset(path string) (*Ruleset, error) {
 	return ParseRuleset(data)
 }
 
-// ParseRuleset parses YAML bytes into a Ruleset.
 func ParseRuleset(data []byte) (*Ruleset, error) {
 	var rs Ruleset
 	if err := yaml.Unmarshal(data, &rs); err != nil {
 		return nil, fmt.Errorf("parsing ruleset: %w", err)
 	}
-
-	// Apply defaults
 	if rs.Version == "" {
 		rs.Version = "1.0.0"
 	}
@@ -33,7 +29,6 @@ func ParseRuleset(data []byte) (*Ruleset, error) {
 	if rs.GracefulDegradation == "" {
 		rs.GracefulDegradation = "allow_with_audit"
 	}
-
 	for i := range rs.Rules {
 		r := &rs.Rules[i]
 		if r.Version == "" {
@@ -51,10 +46,11 @@ func ParseRuleset(data []byte) (*Ruleset, error) {
 		if r.Target == "" {
 			r.Target = TargetRuntime
 		}
+		// Normalize legacy OpenShell-specific targets
+		r.Target = NormalizeTarget(r.Target)
 		if r.TimeoutMs == 0 {
 			r.TimeoutMs = 50
 		}
 	}
-
 	return &rs, nil
 }
