@@ -62,17 +62,34 @@ Same GRDL rules, same CFAIS engine, different infrastructure layer.
 | `dao-governance` | 4 | Treasury limits, quorum, voting weight caps |
 | `ai-safety` | 4 | Tool allowlists, output validation, rate limiting |
 
-## The Seven Governance Laws
+## The Seven Constitutional Laws
 
-| # | Law | Addresses |
-|---|-----|-----------|
-| 1 | Primacy | Human authority overrides agent decisions |
-| 2 | Transparency | All decisions explainable and auditable |
-| 3 | Accountability | Every action traced to an entity |
-| 4 | Fairness | No bias in agent decisions |
-| 5 | Safety | Cascading failures, privilege limits, budget runaway |
-| 6 | Privacy | Data minimisation, PII controls |
-| 7 | Graceful degradation | Deterministic fallback on failure |
+GRDL encodes seven constitutional laws for Autonomous Intelligent Systems (CFAIS). Each law compiles to an enforceable GRDL rule.
+
+| # | Law | Constraint | GRDL enforcement |
+|---|-----|-----------|------------------|
+| 1 | **Human Dignity** | Actions must not violate human dignity as defined by the applicable constitutional framework. | `VERIFY action.impact_on_humans.dignity_score >= constitutional_threshold` |
+| 2 | **Transparency** | The system provides a complete explanation of its reasoning on request by authorized parties. | `REQUIRE action.explanation.completeness >= 0.95 AND explanation.constitutional_trace = true` |
+| 3 | **Accountability** | The system maintains an immutable audit trail of all decisions and actions. | `LOG decision_chain TO accountability_layer WITH cryptographic_integrity = true` |
+| 4 | **Human Override** | The system accepts override commands from authorized parties, except where the override would itself cause a constitutional violation. | `ACCEPT human_command IF authorized(commander) AND NOT violates(command, constitutional_constraints)` |
+| 5 | **Self-Limitation** | The system does not acquire capabilities beyond the scope necessary for its assigned function. | `CONSTRAIN capability_acquisition TO function_scope AND ALERT IF detected_capability > authorized_capability` |
+| 6 | **Value Alignment** | The system's actions remain aligned with encoded human constitutional values. | `VERIFY action.value_alignment_score >= alignment_threshold` |
+| 7 | **Graceful Degradation** | On constraint violation or uncertainty, the system degrades to a verified safe state rather than failing open. | `ON violation OR uncertainty: DEGRADE TO nearest_verified_safe_state` |
+
+### Governance parameters
+
+Laws operate over configurable governance parameters. Proportionality bounds the influence of autonomous agents relative to humans:
+
+```yaml
+# Proportionality: AI voting weight is bounded to a fraction of human-equivalent weight
+governance_parameters:
+  proportionality:
+    ai_weight_bound: 0.25        # alpha: max AI weight as fraction of human-equivalent
+    scope: [dao_voting, delegation]
+    enforcement: REQUIRE ai_agent.weight <= alpha * human_equivalent.weight
+```
+
+Proportionality is a governance parameter enforced under Law 4 (Human Override) and Law 5 (Self-Limitation), not a separate law.
 
 ## License
 
