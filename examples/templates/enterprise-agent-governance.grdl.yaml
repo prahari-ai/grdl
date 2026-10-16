@@ -24,7 +24,7 @@ rules:
       Actions exceeding a configurable impact threshold require
       explicit human approval before execution. Prevents autonomous
       decisions on financial, security, or personnel matters.
-    laws: [PRIMACY]
+    laws: [HUMAN_OVERRIDE]
     scope: "*"
     condition:
       logic: any_of
@@ -113,7 +113,7 @@ rules:
     description: >
       Prevents agent budget/resource runaway. Actions that would
       exceed the allocated budget are blocked.
-    laws: [SAFETY]
+    laws: [SELF_LIMITATION]
     scope: resource_consumption
     condition:
       field: payload.estimated_cost
@@ -137,7 +137,7 @@ rules:
     description: >
       Agents cannot grant themselves or other agents elevated
       permissions. All privilege changes require human approval.
-    laws: [SAFETY, PRIMACY]
+    laws: [SELF_LIMITATION, HUMAN_OVERRIDE]
     scope: access_control
     condition:
       logic: any_of
@@ -166,7 +166,7 @@ rules:
       Limits the depth of agent-to-agent delegation chains to prevent
       cascading failures. A single action cannot trigger more than
       N downstream agent invocations.
-    laws: [SAFETY]
+    laws: [SELF_LIMITATION]
     scope: "*"
     condition:
       field: payload.delegation_depth
@@ -191,7 +191,7 @@ rules:
     description: >
       Agents must request only the data fields necessary for their
       task. Broad data access requests are flagged.
-    laws: [PRIVACY]
+    laws: [HUMAN_DIGNITY]
     scope: data_access
     condition:
       field: payload.fields_requested_count
@@ -214,7 +214,7 @@ rules:
     description: >
       Any access to personally identifiable information must include
       a purpose justification and will be logged.
-    laws: [PRIVACY, ACCOUNTABILITY]
+    laws: [HUMAN_DIGNITY, ACCOUNTABILITY]
     scope: data_access
     condition:
       logic: all_of
@@ -243,7 +243,7 @@ rules:
     description: >
       Agents must not use protected attributes (configurable per
       jurisdiction) as decision features. Detects and blocks.
-    laws: [FAIRNESS]
+    laws: [HUMAN_DIGNITY]
     scope: "*"
     condition:
       logic: any_of
@@ -276,7 +276,7 @@ rules:
 
   - id: static.non_root
     name: Non-root agent execution
-    laws: [SAFETY]
+    laws: [SELF_LIMITATION]
     scope: "*"
     severity: critical
     enforcement: enforce

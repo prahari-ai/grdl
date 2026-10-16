@@ -1,17 +1,31 @@
 # DAO / Cooperative Governance Template
 # For DAOs, cooperatives, and multi-stakeholder organizations.
 
-id: dao-governance-v1
+id: dao-governance-v2
 name: DAO Governance Rules
 description: >
   Governance rules for AI agents operating within DAOs or cooperative
   organizations. Enforces multi-stakeholder approval, treasury limits,
   and democratic decision-making.
-version: "1.0.0"
+version: "2.0.0"
 framework: dao_charter
 
 default_enforcement: enforce
 graceful_degradation: deny_all
+
+# Governance parameters from the MLSC paper (DAWO26, Section 6).
+governance_parameters:
+  proportionality:
+    # alpha: an AI agent's voting weight may not exceed this fraction of the
+    # human-equivalent weight for the same stake: w_AI(a) <= alpha * w_human(s_a).
+    # Apply the conserved-voting-power 1/k factor before sending ai_weight.
+    ai_weight_bound: 0.25
+    scope: [ai_vote]
+  reversibility:
+    # Window during which a decision where AI votes were decisive can be
+    # challenged by an AI-excluded human re-vote (72 hours).
+    challenge_window_s: 259200
+    scope: [decision_execution, human_revote]
 
 rules:
 
@@ -20,7 +34,7 @@ rules:
     description: >
       Treasury transactions above the configured threshold require
       multi-sig or governance vote approval.
-    laws: [PRIMACY, SAFETY]
+    laws: [HUMAN_OVERRIDE, SELF_LIMITATION]
     scope: treasury_transaction
     condition:
       field: payload.amount
@@ -41,7 +55,7 @@ rules:
     description: >
       Governance proposals cannot be executed without meeting
       the minimum quorum threshold.
-    laws: [FAIRNESS, ACCOUNTABILITY]
+    laws: [HUMAN_DIGNITY, ACCOUNTABILITY]
     scope: governance_decision
     condition:
       field: payload.participation_rate
@@ -61,7 +75,7 @@ rules:
     description: >
       No single member or delegate can control more than the
       configured maximum voting weight.
-    laws: [FAIRNESS, PRIMACY]
+    laws: [HUMAN_DIGNITY, HUMAN_OVERRIDE]
     scope: governance_decision
     condition:
       field: payload.max_voter_weight
@@ -76,9 +90,201 @@ rules:
       message: Voting weight exceeds maximum. Possible governance capture detected.
       audit_log: true
 
+  # ═══════════ AI agent participation (CFAIS constraints, MLSC paper §6) ═══════════
+  # AI votes are evaluated with action_type "ai_vote"; decisions with
+  # "decision_execution"; human challenges with "human_revote".
+
+  - id: cfais.ai_vote_inputs_present
+    name: AI vote weights must be supplied
+    description: >
+      The proportionality bound cannot be checked without both weights,
+      so the vote is rejected rather than counted unchecked.
+    laws: [GRACEFUL_DEGRADATION, SELF_LIMITATION]
+    scope: ai_vote
+    condition:
+      logic: any_of
+      conditions:
+        - field: payload.ai_weight
+          operator: exists
+          value: false
+        - field: payload.human_equivalent_weight
+          operator: exists
+          value: false
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: AI vote is missing ai_weight or human_equivalent_weight.
+      audit_log: true
+
+  - id: cfais.ai_vote_transparency
+    name: AI votes carry a complete audit trail
+    description: >
+      Every AI governance action must produce its reasoning chain, data
+      inputs and decision criteria.
+    laws: [TRANSPARENCY, ACCOUNTABILITY]
+    scope: ai_vote
+    condition:
+      logic: any_of
+      conditions:
+        - field: payload.reasoning_chain
+          operator: exists
+          value: false
+        - field: payload.data_inputs
+          operator: exists
+          value: false
+        - field: payload.decision_criteria
+          operator: exists
+          value: false
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: >
+        AI vote rejected: reasoning_chain, data_inputs and decision_criteria
+        are all required.
+      audit_log: true
+
+  - id: cfais.ai_layer_restriction
+    name: AI agents vote in L0 unless approved
+    description: >
+      AI agents may participate in L0 (general members) with bounded weight.
+      Participation in L1-L3 requires explicit multi-layer approval.
+    laws: [HUMAN_OVERRIDE, SELF_LIMITATION]
+    scope: ai_vote
+    condition:
+      logic: all_of
+      conditions:
+        - field: payload.layer
+          operator: ne
+          value: L0
+        - field: payload.multi_layer_approval
+          operator: ne
+          value: true
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: AI agents may vote above L0 only with multi-layer approval.
+      escalation: governance_dao
+      audit_log: true
+
+  - id: cfais.ai_proportionality
+    name: AI voting weight proportionality bound
+    description: >
+      w_AI(a) <= alpha * w_human(s_a). Rejects any AI vote whose weight
+      exceeds alpha times the human-equivalent weight for the same stake.
+    laws: [HUMAN_OVERRIDE, SELF_LIMITATION]
+    scope: ai_vote
+    condition:
+      field: payload.ai_weight
+      operator: gt
+      value_source: payload.human_equivalent_weight
+      scale_source: params.proportionality.ai_weight_bound
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: AI voting weight exceeds the proportionality bound.
+      alternative: Recompute the AI agent's weight with the alpha bound applied.
+      audit_log: true
+
+  - id: cfais.reversibility_flag_required
+    name: Execution must declare whether AI votes were decisive
+    laws: [TRANSPARENCY, HUMAN_OVERRIDE]
+    scope: decision_execution
+    condition:
+      field: payload.ai_votes_decisive
+      operator: exists
+      value: false
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: >
+        Decision execution must state ai_votes_decisive so the
+        reversibility window can be applied.
+      audit_log: true
+
+  - id: cfais.reversibility_hold
+    name: Hold AI-decided outcomes during the challenge window
+    description: >
+      A decision in which AI votes were decisive is not executed until the
+      reversibility window has passed, so humans can still trigger a re-vote.
+    laws: [HUMAN_OVERRIDE]
+    scope: decision_execution
+    condition:
+      logic: all_of
+      conditions:
+        - field: payload.ai_votes_decisive
+          operator: eq
+          value: true
+        - logic: any_of
+          conditions:
+            - field: payload.seconds_since_decision
+              operator: exists
+              value: false
+            - field: payload.seconds_since_decision
+              operator: lt
+              value_source: params.reversibility.challenge_window_s
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: hold
+      message: >
+        AI votes were decisive. Execution is held until the reversibility
+        window closes.
+      alternative: Execute after the window, or let members re-vote now.
+      audit_log: true
+
+  - id: cfais.revote_eligibility
+    name: Human re-vote conditions
+    description: >
+      Members may trigger a re-vote on a decision where AI votes were
+      decisive, within the window, requested by a human, with no AI
+      participants.
+    laws: [HUMAN_OVERRIDE, HUMAN_DIGNITY]
+    scope: human_revote
+    condition:
+      logic: any_of
+      conditions:
+        - field: payload.original_ai_decisive
+          operator: ne
+          value: true
+        - field: payload.requested_by_type
+          operator: ne
+          value: human
+        - field: payload.seconds_since_decision
+          operator: exists
+          value: false
+        - field: payload.seconds_since_decision
+          operator: gt
+          value_source: params.reversibility.challenge_window_s
+        - field: payload.ai_participants
+          operator: exists
+          value: false
+        - field: payload.ai_participants
+          operator: gt
+          value: 0
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: >
+        Re-vote not permitted: it must target an AI-decided outcome, be
+        requested by a human within the window, and exclude AI participants.
+      audit_log: true
+
   - id: static.non_root
     name: Non-root execution
-    laws: [SAFETY]
+    laws: [SELF_LIMITATION]
     scope: "*"
     severity: critical
     target: infrastructure

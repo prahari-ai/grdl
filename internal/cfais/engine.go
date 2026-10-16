@@ -74,6 +74,7 @@ type conditionNode struct {
 	Operator    string
 	Value       interface{}
 	ValueSource string
+	ScaleSource string
 	// Composite
 	Logic    string // all_of, any_of, none_of
 	Children []*conditionNode
@@ -93,6 +94,7 @@ type Engine struct {
 	wildcardRules []*ruleEntry            // rules with scope "*"
 	gracefulPolicy string
 	config        map[string]interface{}
+	params        map[string]interface{} // governance_parameters
 }
 
 // NewEngine creates an engine from compiled CFAIS runtime config.
@@ -100,6 +102,9 @@ func NewEngine(config map[string]interface{}) (*Engine, error) {
 	e := &Engine{
 		scopeIndex: make(map[string][]*ruleEntry),
 		config:     config,
+	}
+	if p, ok := config["governance_parameters"].(map[string]interface{}); ok {
+		e.params = p
 	}
 
 	// Extract graceful degradation policy
@@ -297,6 +302,17 @@ func (e *Engine) evalAtomic(node *conditionNode, ctx *EvaluationContext) (bool, 
 		}
 	}
 
+	// Scaled comparison: expected = expected * scale (e.g. alpha * w_human).
+	// An unresolvable or non-numeric operand is an evaluation error, which
+	// the caller treats as "condition not met"; templates guard the inputs.
+	if node.ScaleSource != "" {
+		base, scale, err := toFloats(expected, e.resolveField(node.ScaleSource, ctx))
+		if err != nil {
+			return false, fmt.Errorf("scale_source %s: %w", node.ScaleSource, err)
+		}
+		expected = base * scale
+	}
+
 	switch node.Operator {
 	case "eq":
 		return fmt.Sprintf("%v", actual) == fmt.Sprintf("%v", expected), nil
@@ -372,6 +388,8 @@ func (e *Engine) resolveField(path string, ctx *EvaluationContext) interface{} {
 		source = ctx.Context
 	case "config":
 		source = e.config
+	case "params":
+		source = e.params
 	default:
 		// Try payload as default
 		source = ctx.Payload
@@ -521,6 +539,7 @@ func parseConditionNode(m map[string]interface{}) *conditionNode {
 		Operator:    getString(m, "operator"),
 		Value:       m["value"],
 		ValueSource: getString(m, "value_source"),
+		ScaleSource: getString(m, "scale_source"),
 	}
 
 	if subs, ok := m["conditions"].([]interface{}); ok {

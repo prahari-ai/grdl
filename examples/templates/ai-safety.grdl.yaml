@@ -21,7 +21,7 @@ rules:
       Agent outputs that would be delivered to end users must pass
       content safety checks. Blocks harmful, misleading, or
       policy-violating content.
-    laws: [SAFETY, ACCOUNTABILITY]
+    laws: [VALUE_ALIGNMENT, ACCOUNTABILITY]
     scope: content_generation
     condition:
       logic: any_of
@@ -46,7 +46,7 @@ rules:
     description: >
       Agents may only invoke tools from the approved allowlist.
       Prevents unauthorized tool use and scope creep.
-    laws: [SAFETY, PRIMACY]
+    laws: [SELF_LIMITATION, HUMAN_OVERRIDE]
     scope: tool_invocation
     condition:
       field: payload.tool_name
@@ -66,7 +66,7 @@ rules:
     name: Action rate limiting
     description: >
       Prevents runaway agent loops by limiting actions per time window.
-    laws: [SAFETY]
+    laws: [SELF_LIMITATION]
     scope: "*"
     condition:
       field: payload.actions_in_window
@@ -83,7 +83,7 @@ rules:
 
   - id: static.non_root
     name: Non-root execution
-    laws: [SAFETY]
+    laws: [SELF_LIMITATION]
     scope: "*"
     severity: critical
     target: infrastructure

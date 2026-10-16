@@ -59,7 +59,7 @@ Same GRDL rules, same CFAIS engine, different infrastructure layer.
 | Template | Rules | Key governance controls |
 |----------|-------|----------------------|
 | `enterprise-agent-governance` | 11 | Budget caps, privilege escalation, PII controls, cascading depth, human-in-the-loop |
-| `dao-governance` | 4 | Treasury limits, quorum, voting weight caps |
+| `dao-governance` | 11 | Treasury limits, quorum, voting weight caps, plus AI-agent participation: audit trail per AI vote, proportionality bound (α), L0-only unless approved, reversibility window with AI-excluded human re-vote |
 | `ai-safety` | 4 | Tool allowlists, output validation, rate limiting |
 | `agentic-payments` | 16 | AI agents spending autonomously (stablecoin micropayments, x402, pay-per-call APIs): funder identity, counterparty/asset/network allowlists, per-payment and wallet caps, spend velocity limits, human approval threshold, fail-closed on missing config |
 
@@ -79,18 +79,42 @@ GRDL encodes seven constitutional laws for Autonomous Intelligent Systems (CFAIS
 
 ### Governance parameters
 
-Laws operate over configurable governance parameters. Proportionality bounds the influence of autonomous agents relative to humans:
+Laws operate over ruleset-level parameters. Two are implemented, following the MLSC paper (DAWO26, Section 6):
 
 ```yaml
-# Proportionality: AI voting weight is bounded to a fraction of human-equivalent weight
 governance_parameters:
   proportionality:
-    ai_weight_bound: 0.25        # alpha: max AI weight as fraction of human-equivalent
-    scope: [dao_voting, delegation]
-    enforcement: REQUIRE ai_agent.weight <= alpha * human_equivalent.weight
+    ai_weight_bound: 0.25      # alpha in (0,1): w_AI(a) <= alpha * w_human(s_a)
+    scope: [ai_vote]
+  reversibility:
+    challenge_window_s: 259200 # 72h: AI-decided outcomes can be re-voted by humans, AI excluded
+    scope: [decision_execution, human_revote]
 ```
 
-Proportionality is a governance parameter enforced under Law 4 (Human Override) and Law 5 (Self-Limitation), not a separate law.
+Rules reference parameters as `params.<name>.<field>`. A `scale_source` lets a condition compare against a product, so the proportionality bound is written directly:
+
+```yaml
+condition:
+  field: payload.ai_weight
+  operator: gt
+  value_source: payload.human_equivalent_weight
+  scale_source: params.proportionality.ai_weight_bound
+```
+
+The loader rejects α outside (0,1), a non-positive window, and any rule that references a parameter the ruleset does not set. Proportionality is enforced under Law 4 (Human Override) and Law 5 (Self-Limitation); reversibility under Law 4. Neither is a separate law.
+
+### Law names before v0.3.0
+
+Rule files written for v0.1/v0.2 still load. The loader maps old names to the canonical seven:
+
+| Old name | Maps to |
+|----------|---------|
+| `PRIMACY` | `HUMAN_OVERRIDE` |
+| `FAIRNESS`, `PRIVACY` | `HUMAN_DIGNITY` |
+| `SAFETY` | `SELF_LIMITATION` |
+| `GRACEFUL_DEGRAD` | `GRACEFUL_DEGRADATION` |
+
+Any other unknown law name is a load error.
 
 ## License
 

@@ -44,7 +44,7 @@ rules:
     description: >
       If the deployer's limits are missing, threshold rules cannot be
       evaluated. Rather than silently allowing, block the payment.
-    laws: [GRACEFUL_DEGRAD, SAFETY]
+    laws: [GRACEFUL_DEGRADATION, SELF_LIMITATION]
     scope: agent_payment
     condition:
       logic: any_of
@@ -78,7 +78,7 @@ rules:
     description: >
       Velocity rules depend on counters maintained by the application.
       A payment without counters cannot be checked against the window.
-    laws: [GRACEFUL_DEGRAD, SAFETY]
+    laws: [GRACEFUL_DEGRADATION, SELF_LIMITATION]
     scope: agent_payment
     condition:
       logic: any_of
@@ -161,7 +161,7 @@ rules:
   - id: safety.asset_allowlist
     name: Settlement asset allowlist
     description: Only approved assets may be spent (e.g. a single stablecoin).
-    laws: [SAFETY]
+    laws: [SELF_LIMITATION]
     scope: agent_payment
     condition:
       field: payload.asset
@@ -179,7 +179,7 @@ rules:
   - id: safety.network_allowlist
     name: Settlement network allowlist
     description: Payments may only settle on approved networks.
-    laws: [SAFETY]
+    laws: [SELF_LIMITATION]
     scope: agent_payment
     condition:
       field: payload.network
@@ -198,7 +198,7 @@ rules:
     description: >
       Agents may only pay known, approved services. An unknown recipient
       is the most common sign of a prompt-injected or hijacked agent.
-    laws: [SAFETY, PRIMACY]
+    laws: [SELF_LIMITATION, HUMAN_OVERRIDE]
     scope: agent_payment
     condition:
       field: payload.recipient
@@ -223,7 +223,7 @@ rules:
   - id: safety.per_payment_cap
     name: Per-payment ceiling
     description: No single payment may exceed the deployer's per-payment cap.
-    laws: [SAFETY]
+    laws: [SELF_LIMITATION]
     scope: agent_payment
     condition:
       field: payload.amount
@@ -242,7 +242,7 @@ rules:
   - id: safety.wallet_budget
     name: Wallet budget enforcement
     description: Payment may not exceed what is left in the agent's budget.
-    laws: [SAFETY]
+    laws: [SELF_LIMITATION]
     scope: agent_payment
     condition:
       field: payload.amount
@@ -263,7 +263,7 @@ rules:
     description: >
       Caps the number of payments in a rolling window. Runaway loops show
       up as bursts of tiny payments long before they show up in value.
-    laws: [SAFETY]
+    laws: [SELF_LIMITATION]
     scope: agent_payment
     condition:
       field: payload.payments_in_window
@@ -283,7 +283,7 @@ rules:
   - id: safety.velocity_value
     name: Spend value per window
     description: Caps total value spent in the rolling window.
-    laws: [SAFETY]
+    laws: [SELF_LIMITATION]
     scope: agent_payment
     condition:
       field: payload.spend_in_window
@@ -304,7 +304,7 @@ rules:
     description: >
       Routine micropayments flow freely; anything above the approval
       threshold needs an explicit human sign-off.
-    laws: [PRIMACY]
+    laws: [HUMAN_OVERRIDE]
     scope: agent_payment
     condition:
       logic: all_of
@@ -330,7 +330,7 @@ rules:
     description: >
       Allowed, but flagged — the first payment to any counterparty is
       written to the audit trail for review.
-    laws: [TRANSPARENCY, SAFETY]
+    laws: [TRANSPARENCY, SELF_LIMITATION]
     scope: agent_payment
     condition:
       field: payload.counterparty_first_seen
@@ -351,7 +351,7 @@ rules:
     description: >
       Topping up an agent wallet is the human decision that authorises all
       downstream spending. It must name who approved it.
-    laws: [ACCOUNTABILITY, PRIMACY]
+    laws: [ACCOUNTABILITY, HUMAN_OVERRIDE]
     scope: wallet_funding
     condition:
       logic: any_of
@@ -376,7 +376,7 @@ rules:
     description: >
       Caps a single funding event. Fails closed if the ceiling is not
       configured.
-    laws: [SAFETY, GRACEFUL_DEGRAD]
+    laws: [SELF_LIMITATION, GRACEFUL_DEGRADATION]
     scope: wallet_funding
     condition:
       logic: any_of
@@ -401,7 +401,7 @@ rules:
 
   - id: static.non_root
     name: Non-root execution
-    laws: [SAFETY]
+    laws: [SELF_LIMITATION]
     scope: "*"
     severity: high
     enforcement: enforce

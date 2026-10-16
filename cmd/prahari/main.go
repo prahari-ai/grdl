@@ -26,7 +26,7 @@ func main() {
 	case "serve":
 		cmdServe(os.Args[2:])
 	case "version":
-		fmt.Println("prahari 0.2.0")
+		fmt.Println("prahari 0.3.0")
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		printUsage()

@@ -20,11 +20,11 @@ type Backend interface {
 }
 
 type CompilationResult struct {
-	BackendName     string                 `json:"backend"`
-	InfraConfig     map[string]interface{} `json:"infrastructure_config"`
-	CFAISConfig     map[string]interface{} `json:"cfais_config"`
-	Stats           CompileStats           `json:"stats"`
-	Warnings        []string               `json:"warnings"`
+	BackendName string                 `json:"backend"`
+	InfraConfig map[string]interface{} `json:"infrastructure_config"`
+	CFAISConfig map[string]interface{} `json:"cfais_config"`
+	Stats       CompileStats           `json:"stats"`
+	Warnings    []string               `json:"warnings"`
 }
 
 type CompileStats struct {
@@ -100,11 +100,7 @@ func buildCFAISConfig(runtime []Rule, rs *Ruleset, activeLaws []string, backend 
 	}
 
 	govLaws := map[string]interface{}{}
-	allLaws := []GovernanceLaw{
-		LawPrimacy, LawTransparency, LawAccountability,
-		LawFairness, LawSafety, LawPrivacy, LawGracefulDegrad,
-	}
-	for _, l := range allLaws {
+	for _, l := range AllLaws {
 		govLaws[string(l)] = map[string]interface{}{"active": lawsActive[string(l)]}
 	}
 
@@ -129,8 +125,9 @@ func buildCFAISConfig(runtime []Rule, rs *Ruleset, activeLaws []string, backend 
 			},
 			"audit": map[string]interface{}{"log_path": AuditPath, "enabled": true},
 		},
-		"governance_laws": govLaws,
-		"rules":           rules,
+		"governance_laws":       govLaws,
+		"governance_parameters": rs.GovernanceParameters.ToMap(),
+		"rules":                 rules,
 	}
 }
 
@@ -184,6 +181,9 @@ func serializeCondition(c Condition) map[string]interface{} {
 	m := map[string]interface{}{"field": c.Field, "operator": c.Operator, "value": c.Value}
 	if c.ValueSource != "" {
 		m["value_source"] = c.ValueSource
+	}
+	if c.ScaleSource != "" {
+		m["scale_source"] = c.ScaleSource
 	}
 	return m
 }
