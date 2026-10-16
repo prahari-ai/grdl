@@ -1,6 +1,6 @@
 # GRDL — Governance Rule Definition Language
 
-**The YAML standard for AI agent governance. Runtime-agnostic. Deterministic. Sub-microsecond.**
+**The YAML standard for AI agent governance. Runtime-agnostic. Deterministic. Microsecond-scale.**
 
 GRDL compiles structured governance rules into any enforcement backend — NVIDIA OpenShell, Docker, Kubernetes, or standalone HTTP. One ruleset, any runtime.
 
@@ -26,7 +26,7 @@ prahari compile rules.grdl.yaml --backend docker       # Docker Compose + seccom
 prahari compile rules.grdl.yaml --backend standalone   # HTTP sidecar only (works anywhere)
 ```
 
-The CFAIS engine is deterministic — mathematical comparisons, not ML. Sub-microsecond evaluation. Single static binary.
+The CFAIS engine is deterministic — mathematical comparisons, not ML. Microsecond-scale evaluation. Single static binary.
 
 ## Quick start
 
@@ -61,6 +61,7 @@ Same GRDL rules, same CFAIS engine, different infrastructure layer.
 | `enterprise-agent-governance` | 11 | Budget caps, privilege escalation, PII controls, cascading depth, human-in-the-loop |
 | `dao-governance` | 4 | Treasury limits, quorum, voting weight caps |
 | `ai-safety` | 4 | Tool allowlists, output validation, rate limiting |
+| `agentic-payments` | 16 | AI agents spending autonomously (stablecoin micropayments, x402, pay-per-call APIs): funder identity, counterparty/asset/network allowlists, per-payment and wallet caps, spend velocity limits, human approval threshold, fail-closed on missing config |
 
 ## The Seven Constitutional Laws
 

@@ -1,0 +1,411 @@
+id: agentic-payments-v1
+name: Agentic Payments Governance
+description: >
+  Governance for AI agents that spend money autonomously — stablecoin
+  micropayments over rails such as x402, pay-per-call APIs, model inference,
+  and data purchases. Payments are too small and too frequent for
+  per-transaction human review, so control moves to three checkpoints:
+  the funding setup (who funded the agent, with what authority and limits),
+  the destination (which counterparties, assets and networks are allowed),
+  and the pattern (spend velocity within a time window). Every decision is
+  deterministic and traceable to the human or organisation that deployed
+  and funded the agent.
+version: "1.0.0"
+framework: agentic_payments
+graceful_degradation: deny_all
+
+# ─────────────────────────────────────────────────────────────────────────
+# Context fields the calling application must supply on every evaluation
+# (the agent cannot set these — they come from the deployer's config):
+#
+#   context.max_payment_amount        per-payment ceiling (e.g. 1.00 USDC)
+#   context.wallet_remaining_budget   balance left in the agent's budget
+#   context.approved_counterparties   list of allowed recipient IDs
+#   context.allowed_assets            e.g. ["USDC"]
+#   context.allowed_networks          e.g. ["base"]
+#   context.max_payments_per_window   count ceiling for the rolling window
+#   context.max_spend_per_window      value ceiling for the rolling window
+#   context.human_approval_threshold  payments above this need a human
+#   context.max_wallet_funding        ceiling for a single top-up
+#
+# Payload counters the application tracks (the engine is stateless):
+#
+#   payload.payments_in_window   payments already made in the window
+#   payload.spend_in_window      value spent in the window, INCLUDING
+#                                the payment being evaluated
+# ─────────────────────────────────────────────────────────────────────────
+
+rules:
+
+  # ═══════════════ CHECKPOINT 0: fail closed on missing config ═══════════
+
+  - id: graceful.payment_policy_loaded
+    name: Payment policy must be configured
+    description: >
+      If the deployer's limits are missing, threshold rules cannot be
+      evaluated. Rather than silently allowing, block the payment.
+    laws: [GRACEFUL_DEGRAD, SAFETY]
+    scope: agent_payment
+    condition:
+      logic: any_of
+      conditions:
+        - field: context.max_payment_amount
+          operator: exists
+          value: false
+        - field: context.wallet_remaining_budget
+          operator: exists
+          value: false
+        - field: context.approved_counterparties
+          operator: exists
+          value: false
+        - field: context.max_spend_per_window
+          operator: exists
+          value: false
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: >
+        Payment policy is incomplete — one or more required limits are not
+        configured. Agent payments are blocked until the deployer supplies
+        a complete policy.
+      escalation: operator
+      audit_log: true
+
+  - id: graceful.velocity_counters_present
+    name: Spend counters must be supplied
+    description: >
+      Velocity rules depend on counters maintained by the application.
+      A payment without counters cannot be checked against the window.
+    laws: [GRACEFUL_DEGRAD, SAFETY]
+    scope: agent_payment
+    condition:
+      logic: any_of
+      conditions:
+        - field: payload.payments_in_window
+          operator: exists
+          value: false
+        - field: payload.spend_in_window
+          operator: exists
+          value: false
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: >
+        Spend-window counters are missing from the request. Velocity limits
+        cannot be verified, so the payment is blocked.
+      alternative: >
+        Include payload.payments_in_window and payload.spend_in_window
+        from your payment ledger.
+      audit_log: true
+
+  # ═══════════════ CHECKPOINT 1: who deployed and funded the agent ═══════
+
+  - id: accountability.deployer_identity
+    name: Deployer and funder identity required
+    description: >
+      Accountability traces to whoever deployed and funded the agent,
+      not to the agent itself. Every payment must name both.
+    laws: [ACCOUNTABILITY]
+    scope: agent_payment
+    condition:
+      logic: any_of
+      conditions:
+        - field: agent_id
+          operator: eq
+          value: ""
+        - field: payload.funded_by
+          operator: exists
+          value: false
+        - field: payload.on_behalf_of
+          operator: exists
+          value: false
+    severity: high
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: >
+        Payment lacks an accountable party. Every agent payment must carry
+        agent_id, funded_by (the wallet funder) and on_behalf_of (the
+        deploying person or organisation).
+      audit_log: true
+
+  - id: transparency.payment_purpose
+    name: Payment purpose required
+    description: Every payment must state what it is buying.
+    laws: [TRANSPARENCY]
+    scope: agent_payment
+    condition:
+      field: payload.purpose
+      operator: exists
+      value: false
+    severity: high
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: >
+        Payment has no stated purpose. Unexplained spending is not
+        auditable.
+      alternative: >
+        Add payload.purpose, e.g. "inference: summarise filing",
+        "data: market quote API".
+      audit_log: true
+
+  # ═══════════════ CHECKPOINT 2: where the money is going ═══════════════
+
+  - id: safety.asset_allowlist
+    name: Settlement asset allowlist
+    description: Only approved assets may be spent (e.g. a single stablecoin).
+    laws: [SAFETY]
+    scope: agent_payment
+    condition:
+      field: payload.asset
+      operator: not_in
+      value_source: context.allowed_assets
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: This asset is not approved for agent payments.
+      alternative: Settle in an approved asset.
+      audit_log: true
+
+  - id: safety.network_allowlist
+    name: Settlement network allowlist
+    description: Payments may only settle on approved networks.
+    laws: [SAFETY]
+    scope: agent_payment
+    condition:
+      field: payload.network
+      operator: not_in
+      value_source: context.allowed_networks
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: This network is not approved for agent payments.
+      audit_log: true
+
+  - id: safety.counterparty_allowlist
+    name: Counterparty allowlist
+    description: >
+      Agents may only pay known, approved services. An unknown recipient
+      is the most common sign of a prompt-injected or hijacked agent.
+    laws: [SAFETY, PRIMACY]
+    scope: agent_payment
+    condition:
+      field: payload.recipient
+      operator: not_in
+      value_source: context.approved_counterparties
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: >
+        Recipient is not on the approved counterparty list. Agents cannot
+        pay new services without a human adding them first.
+      alternative: >
+        Ask the operator to approve this counterparty, or use an already
+        approved service.
+      escalation: operator
+      audit_log: true
+
+  # ═══════════════ CHECKPOINT 3: how much, and how fast ═════════════════
+
+  - id: safety.per_payment_cap
+    name: Per-payment ceiling
+    description: No single payment may exceed the deployer's per-payment cap.
+    laws: [SAFETY]
+    scope: agent_payment
+    condition:
+      field: payload.amount
+      operator: gt
+      value_source: context.max_payment_amount
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: Payment exceeds the per-payment ceiling for this agent.
+      alternative: Split the work into smaller paid calls, or request approval.
+      escalation: operator
+      audit_log: true
+
+  - id: safety.wallet_budget
+    name: Wallet budget enforcement
+    description: Payment may not exceed what is left in the agent's budget.
+    laws: [SAFETY]
+    scope: agent_payment
+    condition:
+      field: payload.amount
+      operator: gt
+      value_source: context.wallet_remaining_budget
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: Payment exceeds the agent's remaining budget.
+      alternative: Wait for the next budget top-up by the funder.
+      escalation: operator
+      audit_log: true
+
+  - id: safety.velocity_count
+    name: Payment count per window
+    description: >
+      Caps the number of payments in a rolling window. Runaway loops show
+      up as bursts of tiny payments long before they show up in value.
+    laws: [SAFETY]
+    scope: agent_payment
+    condition:
+      field: payload.payments_in_window
+      operator: gte
+      value_source: context.max_payments_per_window
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: throttle
+      message: >
+        Payment count for this window is exhausted. The agent may be stuck
+        in a retry or tool-call loop.
+      alternative: Pause until the window resets.
+      audit_log: true
+
+  - id: safety.velocity_value
+    name: Spend value per window
+    description: Caps total value spent in the rolling window.
+    laws: [SAFETY]
+    scope: agent_payment
+    condition:
+      field: payload.spend_in_window
+      operator: gt
+      value_source: context.max_spend_per_window
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: throttle
+      message: This payment would exceed the spend ceiling for the window.
+      alternative: Pause until the window resets, or request a higher limit.
+      escalation: operator
+      audit_log: true
+
+  - id: primacy.human_approval_threshold
+    name: Human approval above threshold
+    description: >
+      Routine micropayments flow freely; anything above the approval
+      threshold needs an explicit human sign-off.
+    laws: [PRIMACY]
+    scope: agent_payment
+    condition:
+      logic: all_of
+      conditions:
+        - field: payload.amount
+          operator: gt
+          value_source: context.human_approval_threshold
+        - field: payload.human_approved
+          operator: ne
+          value: true
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: escalate
+      message: Payment is above the auto-approval threshold.
+      alternative: Route to the operator for one-click approval.
+      escalation: operator
+      audit_log: true
+
+  - id: safety.first_payment_to_counterparty
+    name: First payment to an approved counterparty
+    description: >
+      Allowed, but flagged — the first payment to any counterparty is
+      written to the audit trail for review.
+    laws: [TRANSPARENCY, SAFETY]
+    scope: agent_payment
+    condition:
+      field: payload.counterparty_first_seen
+      operator: eq
+      value: true
+    severity: medium
+    enforcement: audit
+    target: runtime
+    remedy:
+      action: log
+      message: First payment to this counterparty — flagged for review.
+      audit_log: true
+
+  # ═══════════════ FUNDING EVENTS (the reviewable human decision) ═══════
+
+  - id: accountability.funding_authorized
+    name: Wallet funding requires a named authoriser
+    description: >
+      Topping up an agent wallet is the human decision that authorises all
+      downstream spending. It must name who approved it.
+    laws: [ACCOUNTABILITY, PRIMACY]
+    scope: wallet_funding
+    condition:
+      logic: any_of
+      conditions:
+        - field: payload.authorized_by
+          operator: exists
+          value: false
+        - field: payload.authorized_by
+          operator: eq
+          value: ""
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: Wallet funding has no named human authoriser.
+      escalation: operator
+      audit_log: true
+
+  - id: safety.funding_cap
+    name: Single top-up ceiling
+    description: >
+      Caps a single funding event. Fails closed if the ceiling is not
+      configured.
+    laws: [SAFETY, GRACEFUL_DEGRAD]
+    scope: wallet_funding
+    condition:
+      logic: any_of
+      conditions:
+        - field: context.max_wallet_funding
+          operator: exists
+          value: false
+        - field: payload.amount
+          operator: gt
+          value_source: context.max_wallet_funding
+    severity: critical
+    enforcement: enforce
+    target: runtime
+    remedy:
+      action: block
+      message: >
+        Top-up exceeds the single-funding ceiling, or no ceiling is
+        configured.
+      alternative: Fund in smaller tranches, or raise the configured ceiling.
+      escalation: operator
+      audit_log: true
+
+  - id: static.non_root
+    name: Non-root execution
+    laws: [SAFETY]
+    scope: "*"
+    severity: high
+    enforcement: enforce
+    target: infrastructure
+    remedy:
+      action: block
+      message: Payment agents must run as a non-root user.
